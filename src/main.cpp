@@ -21,6 +21,7 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
+// strings that do stuff to the cursor
 #define RESET_CURSOR "\033[H"
 #define HIDE_CURSOR  "\033[?25l"
 #define SHOW_CURSOR  "\033[?25h"
@@ -36,6 +37,7 @@ int main() {
     int choice1;
     std::cout << "(1) Convert mp4\n(2) Play from file\n(3) Exit\n";
     std::cin >> choice1;
+    // this is a very specific string (which i copied from a youtube tutorial) that represents the different brightnesses
     std::string gscale = "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\\|()1{}[]?-_+~i!lI;:,\"^`'. ";
     int w, h;
     getTerminalSize(w, h);
@@ -44,6 +46,7 @@ int main() {
         std::cout << "Path to mp4: ";
         std::cin >> mp4_path;
 
+        // 'extract' name and path of mp4 and, using that, construct the path of the frame buffer file and mp3 file
         std::filesystem::path mp4(mp4_path);
         std::string mp4_parent_dir = std::filesystem::absolute(mp4).parent_path().string();
         std::string mp4_title = mp4.stem();
@@ -51,6 +54,7 @@ int main() {
         std::string frame_buffer_path = path + ".txt";
         std::filesystem::path mp3_path(path + ".mp3");
 
+        // prepare for frame generation (make and open files, set important variables)
         std::ofstream frame_buffer_file(mp4_parent_dir + "/" + mp4_title + ".txt");
         cv::VideoCapture cap(mp4_path);
         if (!cap.isOpened()) {
@@ -59,14 +63,18 @@ int main() {
         }
         int frame_count = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
         double fps = cap.get(cv::CAP_PROP_FPS);
+        // generate frames
         genFrames(mp4_path, w, h, frame_count, gscale);
+        // put everything together
         std::string save_text = "";
+        // these saved variables here are to check if the video res fits your screen and other similar stuff
         save_text += "@@@terminal_width=" + std::to_string(w) + "\n@@@terminal_height=" + std::to_string(h) + "\n@@@frames=" + std::to_string(frame_count) + "\n@@@fps=" + std::to_string(fps);
         int cnt = 0;
         for (auto i : frame_buffer) {
             save_text += "\n@@@frame" + std::to_string(cnt) + "=" + i;
             cnt++;
         }
+        // save and done
         frame_buffer_file << save_text << std::endl;
         frame_buffer_file.close();
         cap.release();
@@ -83,6 +91,7 @@ int main() {
         std::ifstream frame_buffer_file(frame_path);
         std::string line;
 
+        // what the hell is this
         std::string file_width = "@@@terminal_width=";
         std::string file_height = "@@@terminal_height=";
         std::string file_frames = "@@@frames=";
@@ -93,12 +102,15 @@ int main() {
         double saved_fps = -1;
     
         int cnt = 1;
+        // i had a function for this earlier, moved everything to one singular while loop to save performance
         while (std::getline(frame_buffer_file, line)) {
+            // line.find for all the variables that are not the frames
             int res_w = line.find(file_width);
             int res_h = line.find(file_height);
             int res_frames = line.find(file_frames);
             int res_fps = line.find(file_fps);
             if (res_w != std::string::npos && saved_w == -1) {
+                // here we just erase the part we dont want, so we start at the pos where we found res_w and go on as long as our preset strings are
                 line.erase(res_w, file_width.length());
                 saved_w = std::stoi(line);
             } else if (res_h != std::string::npos && saved_h == -1) {
@@ -109,10 +121,11 @@ int main() {
                 saved_frames = std::stoi(line);
             } else if (res_fps != std::string::npos && saved_fps == -1) {
                 line.erase(res_fps, file_fps.length());
-                saved_fps = std::stod(line);
+                saved_fps = std::stod(line); // double instead of int here
             }
         }
 
+        // we set everything to -1 before because of this, -1 because no one has a negative screen resolution
         if (saved_w == -1 || saved_h == -1 || saved_frames == -1 || saved_fps == -1) {
             std::cerr << "Error: Invalid frame data file\n";
             std::exit(EXIT_FAILURE);
@@ -123,24 +136,31 @@ int main() {
             return -1;
         }
 
-        // what i need to do:
+        // what i need/had to do:
         // for loop, inside we get the line which contains the frame, but we have to remember what the last
         // 'identifier' was. for example: @@@frame0=somestring, we would have to remember '0' because frame 0,
         // and every newline without an 'identifier' we would have to assign it to that
+
+        // reset position after reading the first bunch of crap
         frame_buffer_file.clear();
         frame_buffer_file.seekg(0);
 
+        // random ahh required variables ig
         int current_frame = 0;
         cnt = 0;
         int saved_frame_lines = 0;
         bool found = false;
         std::string file_frame = "@@@frame";
         std::string read_frame = "";
+        // originally i had to move the stuff from one vector to a different one but as expected, that wasnt quite as performant as this
         while (std::getline(frame_buffer_file, line)) {
             // we just have a counter that counts how many loops and then it searches for
             // '@@@frame{index}='
+
+            // so this is the 'search query' basically
             file_frame = "@@@frame" + std::to_string(current_frame) + "=";
             if (!found) {
+                // same as before but with more variables to set
                 int res = line.find(file_frame);
                 if (res != std::string::npos) {
                     found = true;
@@ -149,10 +169,12 @@ int main() {
                     saved_frame_lines++;
                 }
             } else {
+                // if we are not done with a frame yet, append to the string we will save, otherwise just put it in the frame_buffer vector
                 if (saved_frame_lines < h) {
                     read_frame += line;
                     saved_frame_lines++;
                 } else if (saved_frame_lines == h) {
+                    // (and set random ahh variables)
                     read_frame += line;
                     frame_buffer.push_back(read_frame);
                     found = false;
@@ -164,13 +186,16 @@ int main() {
             cnt++;
         }
 
+        // oh no! did you accidentally select the wrong file?
         if (frame_buffer.empty()) {
             std::cerr << "Error: Invalid frame data file\n";
             std::exit(EXIT_FAILURE);
         }
 
+        // prepare everything to actually play the video
         frame_buffer_file.close();
 
+        // sound stuff
         ma_engine engine;
         if (ma_engine_init(NULL, &engine) != MA_SUCCESS) {
             std::cerr << "Error: Engine could not be started\n";
@@ -186,15 +211,17 @@ int main() {
         std::cout << HIDE_CURSOR;
 
         while (true) {
+            // we calculate which frame we should show here
             auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start_time).count() / 1000000.0;
 
             target_frame = static_cast<int>(elapsed * saved_fps);
 
-            if (target_frame >= frame_buffer.size()) break;
-            if (target_frame < 0) target_frame = 0;
-            std::cout << RESET_CURSOR << frame_buffer[target_frame] << "\r" << std::flush; // not sure about the target_frame - 1, still gotta test
+            if (target_frame >= frame_buffer.size()) break; // end of video
+            if (target_frame < 0) target_frame = 0; // i think impossible but lets leave it in
+            std::cout << RESET_CURSOR << frame_buffer[target_frame] << "\r" << std::flush; // reset cursor so it doesnt flash, \r so it doesnt spam and flush so it doesnt... uhhh...
         }
 
+        // stop everything
         std::cout << SHOW_CURSOR;
         ma_engine_uninit(&engine);
     }
@@ -202,13 +229,17 @@ int main() {
     return 0;
 }
 
+// this gets the terminal size (surprise)
 void getTerminalSize(int& width, int& height) {
     #ifdef _WIN32
+        // no idea what this does i stole that
+        // (i just remembered i never tested the script on windows maybe i should do tht)
         CONSOLE_SCREEN_BUFFER_INFO csbi;
         GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi);
         width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
         height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
     #else
+        // same with this
         struct winsize w;
         ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
         width = w.ws_col;
@@ -216,15 +247,21 @@ void getTerminalSize(int& width, int& height) {
     #endif
 }
 
+// i like this one i think
 cv::Mat scaleFrame(const cv::Mat& input, int targetW, int targetH) {
+    // calculate... something
+    // ahh yeah the scale we have to multiply the width and height with
     double scale = std::min((double) targetW / input.cols, (double) targetH / input.rows);
 
-    int newW = static_cast<int>(input.cols * 2 * scale);
+    // oh this i know
+    int newW = static_cast<int>(input.cols * 2 * scale); // * 2 because terminal chars arent square
     int newH = static_cast<int>(input.rows * scale);
 
     cv::Mat resized;
+    // how convenient that there is a resize function
     cv::resize(input, resized, cv::Size(newW, newH), 0, 0, cv::INTER_LINEAR);
-
+    
+    // calculations for padding (frame)
     int top = (targetH - newH) / 2;
     int bottom = targetH - newH - top;
     int left = (targetW - newW) / 2;
@@ -232,22 +269,29 @@ cv::Mat scaleFrame(const cv::Mat& input, int targetW, int targetH) {
 
     cv::Mat finalImage;
 
+    // what did i tell you
     cv::copyMakeBorder(resized, finalImage, top, bottom, left, right, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
 
     return finalImage;
 }
 
+// this is the thing i worked the longest at
 void genFrames(std::string videoPath, const int w, const int h, const int total_frames, const std::string gscale) {
+    // probably a prettier way of doing this but im not experienced enough
+    // anyways, these are the vectors for each thread
     std::vector<std::string> r1;
     std::vector<std::string> r2;
     std::vector<std::string> r3;
     std::vector<std::string> r4;
+    // std::atomic so that threads dont interfere
     std::atomic<double> progress = 0.0;
     double progress_last = 0.0;
     std::atomic<int> progress_num = 0;
 
     int frames = total_frames / 4; // 1643 for bad apple
 
+    // multithreading :)
+    // (explanation of the function comes later)
     std::thread t1([&] {genFramesThread(videoPath, 0, w, h, frames - 1, gscale, std::ref(r1), total_frames, progress, progress_num);});
     std::thread t2([&] {genFramesThread(videoPath, frames, w, h, frames * 2 - 1, gscale, std::ref(r2), total_frames, progress, progress_num);});
     std::thread t3([&] {genFramesThread(videoPath, frames * 2, w, h, frames * 3 - 1, gscale, std::ref(r3), total_frames, progress, progress_num);});
@@ -255,6 +299,7 @@ void genFrames(std::string videoPath, const int w, const int h, const int total_
 
     std::cout << HIDE_CURSOR;
 
+    // progress bar logic, got this from stack overflow
     while (progress_num < total_frames) {
         if (progress != progress_last) {
             std::string progress_bar = "[";
@@ -273,6 +318,7 @@ void genFrames(std::string videoPath, const int w, const int h, const int total_
         }
     }
 
+    // wait for threads to finish
     t1.join();
     t2.join();
     t3.join();
@@ -287,8 +333,10 @@ void genFrames(std::string videoPath, const int w, const int h, const int total_
 
     std::cout << progress_bar << std::flush;
 
+    // reserve memory
     frame_buffer.reserve(r1.size() + r2.size() + r3.size() + r4.size());
 
+    // insert results in the main frame buffer (so we can save it to a file)
     frame_buffer.insert(frame_buffer.end(),
             std::make_move_iterator(r1.begin()),
             std::make_move_iterator(r1.end()));
@@ -305,16 +353,22 @@ void genFrames(std::string videoPath, const int w, const int h, const int total_
             std::make_move_iterator(r4.begin()),
             std::make_move_iterator(r4.end()));
 
+    // finally, just delete all contents of the results
     r1.clear(); r2.clear(); r3.clear(); r4.clear();
 }
 
+// okay this is a fun one: each thread had to open the video on its own so videoPath is a param, offset is from which index of frame to start, width and height are self explanatory, end_frame is where to stop
+// gscale is the grayscale stringfrom before, result is the result, total_frames is total_frames, progress and progress_num are vars for progress bar
 void genFramesThread(std::string videoPath, int offset, const int width, const int height, int end_frame, const std::string gscale, std::vector<std::string>& result, int total_frames, std::atomic<double>& progress, std::atomic<int>& progress_num) {
+    // yeah each thread has to open separately
     cv::VideoCapture cap(videoPath);
 
     if (!cap.isOpened()) std::cerr << "Error when opening video" << std::endl;
 
+    // set position in video to the offset
     cap.set(cv::CAP_PROP_POS_FRAMES, offset);
 
+    // here we just loop until we reach the frame index we should stop at
     for (int k = offset; k <= end_frame; k++) {
         std::string current_frame = "";
 
@@ -325,11 +379,14 @@ void genFramesThread(std::string videoPath, int offset, const int width, const i
             break;
         }
 
+        // convert frame to grayscale
         cv::Mat grayscale;
         cvtColor(frame, grayscale, cv::COLOR_RGB2GRAY);
 
+        // scale frame to terminal resolution
         cv::Mat finalFrame = scaleFrame(grayscale, width, height);
 
+        // convert to ascii
         for (int i = 0; i < finalFrame.rows; i++) {
             std::string text = "";
                 for (int j = 0; j < finalFrame.cols; j++) {
@@ -337,16 +394,22 @@ void genFramesThread(std::string videoPath, int offset, const int width, const i
                     text += gscale[(gscale.length() - 1) - (pixel % gscale.length())];
                 }
             current_frame += text;
+            // at the end put a newline
             if (i < finalFrame.rows) {
                 current_frame += "\n";
             }
         }
 
+        // put frame in the result vector
         result.push_back(current_frame);
 
+        // update progress
         progress_num += 1;
         if (progress != 1.0) progress = progress + (1.0 / total_frames);
         else progress = 1.0;
     }
+    // clean up our mess
     cap.release();
 }
+
+// multithreading got the time for generating the video from like 5 minutes down to 30 seconds (for bad apple)
