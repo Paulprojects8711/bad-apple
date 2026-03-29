@@ -8,6 +8,7 @@
 #include <fstream>
 #include <cstdlib>
 #include <filesystem>
+#include <atomic>
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
@@ -26,8 +27,8 @@
 
 void getTerminalSize(int& width, int& height);
 cv::Mat scaleFrame(const cv::Mat& input, int targetW, int targetH);
-void genFrames(cv::VideoCapture cap, const int width, const int height, const int total_frames, const std::string gscale);
-std::string getValueFromFile(std::string search, std::vector<std::string> fileContent);
+void genFrames(std::string videoPath, const int width, const int height, const int total_frames, const std::string gscale);
+void genFramesThread(std::string videoPath, int offset, const int width, const int height, int end_frame, const std::string gscale, std::vector<std::string>& result, int total_frames, std::atomic<double>& progress, std::atomic<int>& progress_num); // genFrames but with offset (for example 4 to start at frame with index 4
 
 std::vector<std::string> frame_buffer;
 
@@ -58,7 +59,7 @@ int main() {
         }
         int frame_count = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
         double fps = cap.get(cv::CAP_PROP_FPS);
-        genFrames(cap, w, h, frame_count, gscale);
+        genFrames(mp4_path, w, h, frame_count, gscale);
         std::string save_text = "";
         save_text += "@@@terminal_width=" + std::to_string(w) + "\n@@@terminal_height=" + std::to_string(h) + "\n@@@frames=" + std::to_string(frame_count) + "\n@@@fps=" + std::to_string(fps);
         int cnt = 0;
@@ -236,26 +237,87 @@ cv::Mat scaleFrame(const cv::Mat& input, int targetW, int targetH) {
     return finalImage;
 }
 
-void genFrames(cv::VideoCapture cap, const int w, const int h, const int total_frames, const std::string gscale) {
-    double progress = 0.0;
+void genFrames(std::string videoPath, const int w, const int h, const int total_frames, const std::string gscale) {
+    std::vector<std::string> r1;
+    std::vector<std::string> r2;
+    std::vector<std::string> r3;
+    std::vector<std::string> r4;
+    std::atomic<double> progress = 0.0;
+    double progress_last = 0.0;
+    std::atomic<int> progress_num = 0;
+
+    int frames = total_frames / 4; // 1643 for bad apple
+
+    std::thread t1([&] {genFramesThread(videoPath, 0, w, h, frames - 1, gscale, std::ref(r1), total_frames, progress, progress_num);});
+    std::thread t2([&] {genFramesThread(videoPath, frames, w, h, frames * 2 - 1, gscale, std::ref(r2), total_frames, progress, progress_num);});
+    std::thread t3([&] {genFramesThread(videoPath, frames * 2, w, h, frames * 3 - 1, gscale, std::ref(r3), total_frames, progress, progress_num);});
+    std::thread t4([&] {genFramesThread(videoPath, frames * 3, w, h, total_frames - 1, gscale, std::ref(r4), total_frames, progress, progress_num);});
+
     std::cout << HIDE_CURSOR;
-    for (int k = 0; k < total_frames; k++) {
+
+    while (progress_num < total_frames) {
+        if (progress != progress_last) {
+            std::string progress_bar = "[";
+            int pos = (w / 2) * progress;
+            for (int i = 0; i < (w / 2); ++i) {
+                if (i < pos) progress_bar += "=";
+                else if (i == pos) progress_bar += ">";
+                else progress_bar += " ";
+            }
+
+            progress_bar += "] " + std::to_string(int(progress * 100.0)) + " % (" + std::to_string(progress_num + 1) + "/" + std::to_string(total_frames) + ")\r";
+
+            std::cout << progress_bar << std::flush;
+
+            progress_last = progress;
+        }
+    }
+
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+
+    std::string progress_bar = "[";
+    for (int i = 0; i < (w / 2); ++i) {
+        progress_bar += "=";
+    }
+
+    progress_bar += "] 100 % (" + std::to_string(total_frames) + "/" + std::to_string(total_frames) + ")\r";
+
+    std::cout << progress_bar << std::flush;
+
+    frame_buffer.reserve(r1.size() + r2.size() + r3.size() + r4.size());
+
+    frame_buffer.insert(frame_buffer.end(),
+            std::make_move_iterator(r1.begin()),
+            std::make_move_iterator(r1.end()));
+
+    frame_buffer.insert(frame_buffer.end(),
+            std::make_move_iterator(r2.begin()),
+            std::make_move_iterator(r2.end()));
+
+    frame_buffer.insert(frame_buffer.end(),
+            std::make_move_iterator(r3.begin()),
+            std::make_move_iterator(r3.end()));
+
+    frame_buffer.insert(frame_buffer.end(),
+            std::make_move_iterator(r4.begin()),
+            std::make_move_iterator(r4.end()));
+
+    r1.clear(); r2.clear(); r3.clear(); r4.clear();
+}
+
+void genFramesThread(std::string videoPath, int offset, const int width, const int height, int end_frame, const std::string gscale, std::vector<std::string>& result, int total_frames, std::atomic<double>& progress, std::atomic<int>& progress_num) {
+    cv::VideoCapture cap(videoPath);
+
+    if (!cap.isOpened()) std::cerr << "Error when opening video" << std::endl;
+
+    cap.set(cv::CAP_PROP_POS_FRAMES, offset);
+
+    for (int k = offset; k <= end_frame; k++) {
         std::string current_frame = "";
 
-        std::string progress_bar = "[";
-        int pos = (w / 2) * progress;
-        for (int i = 0; i < (w / 2); ++i) {
-            if (i < pos) progress_bar += "=";
-            else if (i == pos) progress_bar += ">";
-            else progress_bar += " ";
-        }
-        
-        progress_bar += "] " + std::to_string(int(progress * 100.0)) + " % (" + std::to_string(k + 1) + "/" + std::to_string(total_frames) + ")\r";
-
-        std::cout << progress_bar << std::flush;
-
-        // frame 'generate' logic
-        cap.set(cv::CAP_PROP_POS_FRAMES, k);
         cv::Mat frame;
         bool ret = cap.read(frame);
         if (!ret) {
@@ -266,23 +328,25 @@ void genFrames(cv::VideoCapture cap, const int w, const int h, const int total_f
         cv::Mat grayscale;
         cvtColor(frame, grayscale, cv::COLOR_RGB2GRAY);
 
-        cv::Mat finalFrame = scaleFrame(grayscale, w, h);
+        cv::Mat finalFrame = scaleFrame(grayscale, width, height);
 
         for (int i = 0; i < finalFrame.rows; i++) {
             std::string text = "";
-            for (int j = 0; j < finalFrame.cols; j++) {
-                int pixel = (int)finalFrame.at<uchar>(i, j);
-                text += gscale[(gscale.length() - 1) - (pixel % gscale.length())];
-            }
+                for (int j = 0; j < finalFrame.cols; j++) {
+                    int pixel = (int)finalFrame.at<uchar>(i, j);
+                    text += gscale[(gscale.length() - 1) - (pixel % gscale.length())];
+                }
             current_frame += text;
             if (i < finalFrame.rows) {
                 current_frame += "\n";
             }
         }
 
-        frame_buffer.push_back(current_frame);
- 
-        if (k != total_frames - 2) progress += 1.0 / total_frames;
+        result.push_back(current_frame);
+
+        progress_num += 1;
+        if (progress != 1.0) progress = progress + (1.0 / total_frames);
         else progress = 1.0;
     }
+    cap.release();
 }
