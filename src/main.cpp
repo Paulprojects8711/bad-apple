@@ -12,6 +12,7 @@
 
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
+    #define NOMINMAX
     #include <windows.h>
 #else
     #include <sys/ioctl.h>
@@ -49,7 +50,7 @@ int main() {
         // 'extract' name and path of mp4 and, using that, construct the path of the frame buffer file and mp3 file
         std::filesystem::path mp4(mp4_path);
         std::string mp4_parent_dir = std::filesystem::absolute(mp4).parent_path().string();
-        std::string mp4_title = mp4.stem();
+        std::string mp4_title = mp4.stem().string();
         std::string path = mp4_parent_dir + "/" + mp4_title;
         std::string frame_buffer_path = path + ".txt";
         std::filesystem::path mp3_path(path + ".mp3");
@@ -131,7 +132,7 @@ int main() {
             std::exit(EXIT_FAILURE);
         }
 
-        if (saved_w != w or saved_h != h) {
+        if (saved_w != w || saved_h != h) {
             std::cerr << "Error: Terminal width or height changed, try regenerating the video\n";
             return -1;
         }
